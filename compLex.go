@@ -44,6 +44,11 @@ func Acc(spec interface{}) (acc Acceptor) {
 		return func(rn rune) bool {
 			return unicode.In(rn, spec...)
 		}
+	case map[rune]Acceptor:
+		return func(rn rune) bool {
+			next, ok := spec[rn]
+			return true
+		}
 	default:
 		return nil
 	}
@@ -72,11 +77,13 @@ func statify(acc Acceptor) state {
 /********** Acceptor Composition Functions **********/
 
 func Branch(mapping map[rune]Acceptor, alt Acceptor) Acceptor {
-	var internal state = func(rn rune) (bool, state) {
-		if next, ok := mapping[rn]; ok {
+	var internal state = func(rn rune) (ok bool, next state) {
+		if next, ok = mapping[rn]; ok {
 			return true, statify(next)
 		}
-		return alt(rn), statify(alt)
+		ok   = alt(rn)      // return value of returned Acceptor
+		next = statify(alt) // updates internal
+		return
 	}
 	return func(rn rune) (out bool) {
 		out, internal = internal(rn)
@@ -84,12 +91,32 @@ func Branch(mapping map[rune]Acceptor, alt Acceptor) Acceptor {
 	}
 }
 
+//================================================================================
+
+func Branch(mapping map[rune]Acceptor, alt Acceptor) Acceptor {
+	var curr, next Acceptor
+	curr = func(rn rune) (ok bool) {
+		if next, ok = mapping[rn]; ok {
+			curr = next
+			return
+		} else {
+			curr, ok = alt, alt(rn) // order doesn't matter here!
+			return
+		}
+	}
+	return func(rn rune) (out bool) {
+		return current(rn)
+	}
+}
+
+//================================================================================
+
 func Skip(skip int, acc Acceptor) Acceptor {
 	return Chain(Truncate(skip, All()), acc)
 }
 
 func FirstOf(accs ...Acceptor) Acceptor {
-	var internal state = func(rn rune) (bool, state) {
+	var internal state = func(rn rune) (ok bool, next state) {
 		for _, acc := range accs {
 			if acc(rn) {
 				return true, statify(acc)
